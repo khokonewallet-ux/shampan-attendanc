@@ -223,7 +223,7 @@ const FIREBASE_CONFIG = {
 /* ============================================================ */
 
 var TZ='Asia/Dhaka';
-var DEFAULTS={place:'Shampan Restaurant',lat:null,lng:null,radius:100,open:'09:00',grace:10,off:-1,needLoc:false,lateCutEvery:3};
+var DEFAULTS={place:'Shampan Restaurant',lat:null,lng:null,radius:100,open:'09:00',grace:10,off:-1,needLoc:false,lateCutEvery:3,dayStart:{}};
 var configured=FIREBASE_CONFIG.apiKey.indexOf('PASTE')!==0;
 var app,auth,db;
 
@@ -268,7 +268,7 @@ function currentRec(st){
 }
 function leftEarly(st,r){
   var c=dutyClose(st); if(!r.outAt||!c) return false;
-  var o=toMin(dutyOpen(st)), e=toMin(c), out=minsOf(r.outAt), sameDay=(nowParts(new Date(r.outAt)).date===r.date);
+  var o=toMin(dutyOpen(st,r.date)), e=toMin(c), out=minsOf(r.outAt), sameDay=(nowParts(new Date(r.outAt)).date===r.date);
   if(e<=o) return sameDay?true:out<e;
   return sameDay?out<e:false;
 }
@@ -288,7 +288,11 @@ function fbErr(e){
 
 var DAYN=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function offDay(st){ return (!st||st.weekOff==null||st.weekOff==='')?Number(S.off):Number(st.weekOff); }
-function dutyOpen(st){ return (st&&st.dutyStart)||S.open; }
+function dutyOpen(st,date){
+  var dt=date||nowParts().date, wd=dow(+dt.slice(0,4),+dt.slice(5,7),+dt.slice(8,10));
+  var ds=S.dayStart&&S.dayStart[wd]; if(ds) return ds;
+  return (st&&st.dutyStart)||S.open;
+}
 function dutyClose(st){ return (st&&st.dutyEnd)||''; }
 function leaveOf(sid,date){ return state.leave[sid+'_'+date]||null; }
 function monthStats(sid,y,m){
@@ -414,7 +418,7 @@ async function submit(){
     if(p.kind==='in'){
       var ex=await getDoc(doc(db,'attendance',id));
       if(ex.exists()){ pending=null; toast('Already checked in today.'); await loadRecords(); return; }
-      var open=toMin(dutyOpen(st)), mins=minsOf(iso), isLate=mins>open+Number(S.grace||0);
+      var open=toMin(dutyOpen(st,date)), mins=minsOf(iso), isLate=mins>open+Number(S.grace||0);
       var r={sid:st.id,date:date,inAt:iso,inPhoto:p.photo,inLoc:loc,late:isLate,lateMin:isLate?mins-open:0,outAt:null,outPhoto:null,outLoc:null};
       await setDoc(doc(db,'attendance',id),Object.assign({serverAt:serverTimestamp()},r));
       state.records.push(Object.assign({id:id},r));
@@ -632,7 +636,9 @@ function viewSettings(){
     '<div class="row2"><div class="field"><label for="f-grace">Grace (min)</label><input id="f-grace" type="number" min="0" step="5" data-set="grace" value="'+esc(S.grace)+'"></div>'+
     '<div class="field"><label for="f-off">Default weekly off</label><select id="f-off" data-set="off">'+days+'</select></div></div>'+
     '<div class="field"><label for="f-latecut">Late days that cost 1 day of pay (0 = off)</label><input id="f-latecut" type="number" min="0" step="1" data-set="lateCutEvery" value="'+esc(S.lateCutEvery)+'"></div>'+
-    '<label class="check"><input type="checkbox" id="f-needloc" data-set="needLoc"'+(S.needLoc?' checked':'')+'><span>Require location to check in<br><span class="muted small">Staff cannot submit without a GPS fix.</span></span></label></section>';
+    '<label class="check"><input type="checkbox" id="f-needloc" data-set="needLoc"'+(S.needLoc?' checked':'')+'><span>Require location to check in<br><span class="muted small">Staff cannot submit without a GPS fix.</span></span></label></section>'+
+    '<section class="card stack"><h2>Special day duty start</h2><div class="muted small">For a day that starts at a different time (for example Friday 2:00 PM), set the time here. It applies to every staff member on that weekday. Leave empty for a normal day.</div>'+
+    DAYN.map(function(n,i){ return '<div class="field"><label for="sd-'+i+'">'+n+'</label><input id="sd-'+i+'" type="time" data-sd="'+i+'" value="'+esc((S.dayStart&&S.dayStart[i])||'')+'"></div>'; }).join('')+'</section>';
 
   function offOpts(v){
     var o='<option value=""'+((v==null||v==='')?' selected':'')+'>Default</option><option value="-1"'+(String(v)==='-1'?' selected':'')+'>No weekly off</option>';
@@ -855,6 +861,12 @@ document.addEventListener('change',async function(e){
     var pf=t.dataset.sf.split('|'), sidf=pf[0], ff=pf[1], vf=t.value;
     var valf=(vf==='')?null:(ff==='weekOff'?Number(vf):vf);
     try{ var pd={}; pd[ff]=valf; await updateDoc(doc(db,'staff',sidf),pd); var sf=staffById(sidf); if(sf) sf[ff]=valf; toast('Saved.'); }catch(x){ toast(fbErr(x)); }
+    return;
+  }
+  if(t.dataset&&t.dataset.sd!=null&&t.dataset.sd!==''&&isAdmin){
+    S.dayStart=S.dayStart||{};
+    if(t.value) S.dayStart[t.dataset.sd]=t.value; else delete S.dayStart[t.dataset.sd];
+    try{ await setDoc(doc(db,'settings','main'),S); toast('Saved.'); }catch(x){ toast(fbErr(x)); }
     return;
   }
   if(t.dataset&&t.dataset.set&&isAdmin){
